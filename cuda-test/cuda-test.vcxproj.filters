@@ -15,9 +15,6 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="cuda_main.cu" />
-  </ItemGroup>
-  <ItemGroup>
     <ClInclude Include="..\..\..\..\Desktop\217final\CUDA-RayTracing\gl_helper.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -33,5 +30,8 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <CudaCompile Include="main.cu" />
   </ItemGroup>
 </Project>

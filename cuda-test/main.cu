@@ -3,14 +3,16 @@
 
 #include <iostream>
 #include <cuda_runtime.h>
+
+// use CUDA's built-in float3 type：automated memory alignment & higher performance
+#include "cutil_math.h" 
 #include <vector_types.h>
 #include "device_launch_parameters.h"
-#include "cutil_math.h" // from http://www.icmc.usp.br/~castelo/CUDA/common/inc/cutil_math.h
 
 #define M_PI 3.14159265359f  // pi
-#define width 512  // screenwidth
-#define height 384 // screenheight
-#define samps 200 // samples 
+#define WIDTH 512  // screenwidth
+#define HEIGHT 384 // screenheight
+#define SAMPS 200 // samples 
 
 // __device__ : executed on the device (GPU) and callable only from the device
 
@@ -46,29 +48,15 @@ struct Sphere {
     }
 };
 
-// SCENE
-// 9个球 9 spheres forming a Cornell box
-// ！！优化,或者说作弊==用常量内存渲染球small enough to be in constant GPU memory
-// { float radius, { float3 position }, { float3 emission }, { float3 colour }, refl_type }
-__constant__ Sphere spheres[] = {
- { 1e5f, { 1e5f + 1.0f, 40.8f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { 0.75f, 0.25f, 0.25f }, DIFF }, //Left 
- { 1e5f, { -1e5f + 99.0f, 40.8f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { .25f, .25f, .75f }, DIFF }, //Rght 
- { 1e5f, { 50.0f, 40.8f, 1e5f }, { 0.0f, 0.0f, 0.0f }, { .75f, .75f, .75f }, DIFF }, //Back 
- { 1e5f, { 50.0f, 40.8f, -1e5f + 600.0f }, { 0.0f, 0.0f, 0.0f }, { 1.00f, 1.00f, 1.00f }, DIFF }, //Frnt 
- { 1e5f, { 50.0f, 1e5f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { .75f, .75f, .75f }, DIFF }, //Botm 
- { 1e5f, { 50.0f, -1e5f + 81.6f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { .75f, .75f, .75f }, DIFF }, //Top 
- { 16.5f, { 27.0f, 16.5f, 47.0f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.0f }, DIFF }, // small sphere 1
- { 16.5f, { 73.0f, 16.5f, 78.0f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.0f }, DIFF }, // small sphere 2
- { 600.0f, { 50.0f, 681.6f - .77f, 81.6f }, { 2.0f, 1.8f, 1.6f }, { 0.0f, 0.0f, 0.0f }, DIFF }  // Light
-};
-
-//__device__ inline float clamp(float x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
-//__device__ inline int toInt(float x) { return int(pow(clamp(x), 1 / 2.2) * 255 + .5); }
+// convert RGB float in range [0,1] to int in range [0, 255]
+// perform gamma correction
+inline float clamp(float x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
+inline int toInt(float x) { return int(pow(clamp(x), 1 / 2.2) * 255 + .5); }
 __device__ inline bool intersect_scene(const Ray& r, float& t, int& id)
 {
     float n = sizeof(spheres) / sizeof(Sphere), d, inf = t = 1e20;  // t is distance to closest intersection, initialise t to a huge number outside scene
     for (int i = int(n); i--;)  // test all scene objects for intersection
-        if ((d = spheres[i].intersect(r)) && d < t) 
+        if ((d = spheres[i].intersect(r)) && d < t)
         {  // if newly computed intersection distance d is smaller than current closest intersection distance
             t = d;  // keep track of distance along ray to closest intersection point 
             id = i; // and closest intersected object
@@ -130,7 +118,7 @@ __device__ float3 radiance(Ray& r, unsigned int* s1, unsigned int* s2) { // retu
         accucolor += mask * obj.e;
         if (obj.refl == DIFF)
         {
-      
+
             float r1 = 2 * M_PI * getrandom(s1, s2); // 取一个随机数
             float r2 = getrandom(s1, s2);  // 取第二个随机数
             float r2s = sqrtf(r2);
@@ -146,90 +134,106 @@ __device__ float3 radiance(Ray& r, unsigned int* s1, unsigned int* s2) { // retu
             mask *= obj.c;    // multiply with colour of object       
             mask *= dot(d, nl);  // weigh light contribution using cosine of angle between incident light and normal
             mask *= 2;          // fudge factor
+            //mask是如何等于递归的看不出来
         }
     }
 
     return accucolor;
 }
 
+// SCENE
+// 9个球 9 spheres forming a Cornell box
+// ！！优化,或者说trick==用常量内存渲染球small enough to be in constant GPU memory
+// { float radius, { float3 position }, { float3 emission }, { float3 colour }, refl_type }
+__constant__ Sphere spheres[] = {
+ { 1e5f, { 1e5f + 1.0f, 40.8f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { 0.75f, 0.25f, 0.25f }, DIFF }, //Left 
+ { 1e5f, { -1e5f + 99.0f, 40.8f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { .25f, .25f, .75f }, DIFF }, //Rght 
+ { 1e5f, { 50.0f, 40.8f, 1e5f }, { 0.0f, 0.0f, 0.0f }, { .75f, .75f, .75f }, DIFF }, //Back 
+ { 1e5f, { 50.0f, 40.8f, -1e5f + 600.0f }, { 0.0f, 0.0f, 0.0f }, { 1.00f, 1.00f, 1.00f }, DIFF }, //Frnt 
+ { 1e5f, { 50.0f, 1e5f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { .75f, .75f, .75f }, DIFF }, //Botm 
+ { 1e5f, { 50.0f, -1e5f + 81.6f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { .75f, .75f, .75f }, DIFF }, //Top 
+ { 16.5f, { 27.0f, 16.5f, 47.0f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.0f }, DIFF }, // small sphere 1
+ { 16.5f, { 73.0f, 16.5f, 78.0f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.0f }, DIFF }, // small sphere 2
+ { 600.0f, { 50.0f, 681.6f - .77f, 81.6f }, { 2.0f, 1.8f, 1.6f }, { 0.0f, 0.0f, 0.0f }, DIFF }  // Light
+};
 
-// __global__ : executed on the device (GPU) and callable only from host (CPU) 
-// this kernel runs in parallel on all the CUDA threads
+//关键代码
+__global__ void raytrac(float3* c) {
 
-__global__ void render_kernel(float3* output) {
-
-    // assign a CUDA thread to every pixel (x,y) 
-    // blockIdx, blockDim and threadIdx are CUDA specific keywords
-    // replaces nested outer loops in CPU code looping over image rows and image columns 
+    // 每个thread管一个像素（可能有点浪费）
+    // replace CPU version for-loop    
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-    unsigned int i = (height - y - 1) * width + x; // index of current pixel (calculated using thread index) 
+    unsigned int i = (HEIGHT - y - 1) * WIDTH + x; // index of current pixel 
 
     unsigned int s1 = x;  // seeds for random number generator
     unsigned int s2 = y;
-
-    // generate ray directed at lower left corner of the screen
-    // compute directions for all other rays by adding cx and cy increments in x and y direction
-    Ray cam(make_float3(50, 52, 295.6), normalize(make_float3(0, -0.042612, -1))); // first hardcoded camera ray(origin, direction) 
-    float3 cx = make_float3(width * .5135 / height, 0.0f, 0.0f); // ray direction offset in x direction
+    // first hardcoded camera ray(origin, direction) 
+    Ray cam(make_float3(50, 52, 295.6), normalize(make_float3(0, -0.042612, -1))); 
+    float3 cx = make_float3(WIDTH * .5135 / HEIGHT, 0.0f, 0.0f); // ray direction offset in x direction
     float3 cy = normalize(cross(cx, cam.d)) * .5135; // ray direction offset in y direction (.5135 is field of view angle)
-    float3 r; // r is final pixel color       
+    float3 r = make_float3(0.0f); // reset r to zero for every pixel  r is final pixel color       
 
-    r = make_float3(0.0f); // reset r to zero for every pixel 
-
-    for (int s = 0; s < samps; s++) {  // samples per pixel
+    for (int s = 0; s < SAMPS; s++) {  // samples per pixel
 
      // compute primary ray direction
-        float3 d = cam.d + cx * ((.25 + x) / width - .5) + cy * ((.25 + y) / height - .5);
-
+        float3 d = cx * ((.25 + x) / WIDTH - .5) + 
+            cy * ((.25 + y) / HEIGHT - .5)+ cam.d;
         // create primary ray, add incoming radiance to pixelcolor
-        r = r + radiance(Ray(cam.o + d * 40, normalize(d)), &s1, &s2) * (1. / samps);
+        r = r + radiance(Ray(cam.o + d * 40, normalize(d)), &s1, &s2) * (1. / SAMPS);
     }       // Camera rays are pushed ^^^^^ forward to start in interior 
-
     // write rgb value of pixel to image buffer on the GPU, clamp value to [0.0f, 1.0f] range
-    output[i] = make_float3(clamp(r.x, 0.0f, 1.0f), clamp(r.y, 0.0f, 1.0f), clamp(r.z, 0.0f, 1.0f));
+    c[i] = make_float3(clamp(r.x, 0.0f, 1.0f), clamp(r.y, 0.0f, 1.0f), clamp(r.z, 0.0f, 1.0f));
 }
 
-inline float clamp(float x) { return x < 0.0f ? 0.0f : x > 1.0f ? 1.0f : x; }
-
-inline int toInt(float x) { return int(pow(clamp(x), 1 / 2.2) * 255 + .5); }  // convert RGB float in range [0,1] to int in range [0, 255] and perform gamma correction
+#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort = true)
+{
+    if (code != cudaSuccess)
+    {
+        fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+        if (abort) exit(code);
+    }
+}
 
 int main() {
 
-    float3* output_h = new float3[width * height]; // pointer to memory for image on the host (system RAM)
-    float3* output_d;    // pointer to memory for image on the device (GPU VRAM)
+    float3* c_h = new float3[WIDTH * HEIGHT]; // pointer to memory for image on the host (system RAM)
+    //Sphere* spheres;
+    float3* c_d;    // pointer to memory for image on the device (GPU VRAM)
 
     // allocate memory on the CUDA device (GPU VRAM)
-    cudaMalloc(&output_d, width * height * sizeof(float3));
+    // 用常量内存装了输入，input就不用另外分配空间了
+    gpuErrchk(cudaMalloc(&c_d, sizeof(float3) * WIDTH* HEIGHT));
 
     // dim3 is CUDA specific type, block and grid are required to schedule CUDA threads over streaming multiprocessors
     dim3 block(8, 8, 1);
-    dim3 grid(width / block.x, height / block.y, 1);
+    dim3 grid(WIDTH / block.x, HEIGHT / block.y, 1);
 
     printf("CUDA initialised.\nStart rendering...\n");
 
     // schedule threads on device and launch CUDA kernel from host
-    render_kernel << < grid, block >> > (output_d);
+    raytrac <<< grid, block >> > (c_d);
+    gpuErrchk(cudaPeekAtLastError());
 
     // copy results of computation from device back to host
-    cudaMemcpy(output_h, output_d, width * height * sizeof(float3), cudaMemcpyDeviceToHost);
+    cudaMemcpy(c_h, c_d, WIDTH * HEIGHT * sizeof(float3), cudaMemcpyDeviceToHost);
 
     // free CUDA memory
-    cudaFree(output_d);
+    cudaFree(c_d);
 
-    printf("Done!\n");
+    printf("Done!\n"); //可以改成计时
 
     // Write image to PPM file, a very simple image file format
-    FILE* f = fopen("smallptcuda.ppm", "w");
-    fprintf(f, "P3\n%d %d\n%d\n", width, height, 255);
-    for (int i = 0; i < width * height; i++)  // loop over pixels, write RGB values
-        fprintf(f, "%d %d %d ", toInt(output_h[i].x),
-            toInt(output_h[i].y),
-            toInt(output_h[i].z));
+    FILE* f = fopen("image.ppm", "w");
+    fprintf(f, "P3\n%d %d\n%d\n", WIDTH, HEIGHT, 255);
+    for (int i = 0; i < WIDTH * HEIGHT; i++)  // loop over pixels, write RGB values
+        fprintf(f, "%d %d %d ", toInt(c_h[i].x),toInt(c_h[i].y),toInt(c_h[i].z));
+    fclose(f);
+    printf("Saved image to 'image.ppm'\n"); //可以改成计时
 
-    printf("Saved image to 'smallptcuda.ppm'\n");
+    delete[] c_h;
 
-    delete[] output_h;
-    system("PAUSE");
+    return 0;
 }
