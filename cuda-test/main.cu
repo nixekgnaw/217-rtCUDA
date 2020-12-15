@@ -1,6 +1,3 @@
-// smallptCUDA by Sam Lapere, 2015
-// based on smallpt, a path tracer by Kevin Beason, 2008  
-
 #include <iostream>
 #include <cuda_runtime.h>
 
