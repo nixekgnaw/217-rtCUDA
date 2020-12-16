@@ -8,12 +8,12 @@
 // use CUDA's built-in float3 type：automated memory alignment & higher performance
 #include "cutil_math.h" 
 #include <vector_types.h>
+#include <curand.h>
 #include <curand_kernel.h>
 
 #define M_PI 3.14159265359f  // pi
 #define WIDTH 512  // screenwidth
 #define HEIGHT 384 // screenheight
-#define SAMPS 200 // samples 
 
 struct Ray {
     float3 o,d; // 光线的起始和方向 ray origin & direction 
@@ -190,7 +190,7 @@ __device__ float3 radiance(Ray& r, curandState* rs) { // returns ray color
 }
 
 //关键代码
-__global__ void raytrac(float3* c) {
+__global__ void raytrac(int samps,float3* c) {
 
     // 每个thread管一个像素
     // replace CPU version for-loop    
@@ -207,17 +207,35 @@ __global__ void raytrac(float3* c) {
     float3 cy = normalize(cross(cx, cam.d)) * .5135; // ray direction offset in y direction (.5135 is field of view angle)
     float3 r = make_float3(0.0f); // reset r to zero for every pixel  r is final pixel color       
 
-    for (int s = 0; s < SAMPS; s++) {  // samples per pixel
+    for (int sy = 0;sy < 2;sy++) //for every pixel,
+        for (int sx = 0; sx < 2; sx++)
+        {
+            for (int s = 0; s < samps; s++) {  // samples per pixel
+                float r1 = 2 * curand_uniform(&rs);
+                float dx = r1 < 1 ? sqrt(r1) - 1 : 1 - sqrt(2 - r1);
+                float r2 = 2 * curand_uniform(&rs);
+                float dy = r2 < 1 ? sqrt(r2) - 1 : 1 - sqrt(2 - r2);
 
-     // compute primary ray direction
-        float3 d = cx * ((.25 + x) / WIDTH - .5) + 
-            cy * ((.25 + y) / HEIGHT - .5)+ cam.d;
-        // create primary ray, add incoming radiance to pixelcolor
-        Ray ray(cam.o + d * 40, normalize(d));
-        r = r + radiance(ray, &rs) * (1. / SAMPS);
-    }       // Camera rays are pushed ^^^^^ forward to start in interior 
-    // write rgb value of pixel to image buffer on the GPU, clamp value to [0.0f, 1.0f] range
-    c[i] = make_float3(clamp(r.x, 0.0f, 1.0f), clamp(r.y, 0.0f, 1.0f), clamp(r.z, 0.0f, 1.0f));
+                float3 d = cx * (((sx + .5 + dx) / 2 + x) / WIDTH - .5) +
+                    cy * (((sy + .5 + dy) / 2 + y) / HEIGHT - .5) + cam.d;
+                Ray ray(cam.o + d * 40, normalize(d));
+                r = r + radiance(ray, &rs) * (1. / samps);
+            } // Camera rays are pushed ^^^^^ forward to start in interior
+            c[i] = c[i] + make_float3(clamp(r.x, 0.0f, 1.0f), clamp(r.y, 0.0f, 1.0f), clamp(r.z, 0.0f, 1.0f))*.25;
+
+                
+
+            // // compute primary ray direction
+            //    float3 d = cx * ((.25 + x) / WIDTH - .5) +
+            //        cy * ((.25 + y) / HEIGHT - .5) + cam.d;
+            //    // create primary ray, add incoming radiance to pixelcolor
+            //    Ray ray(cam.o + d * 40, normalize(d));
+            //    r = r + radiance(ray, &rs) * (1. / samps);
+            //}       // Camera rays are pushed ^^^^^ forward to start in interior 
+            //// write rgb value of pixel to image buffer on the GPU, clamp value to [0.0f, 1.0f] range
+            //c[i] = make_float3(clamp(r.x, 0.0f, 1.0f), clamp(r.y, 0.0f, 1.0f), clamp(r.z, 0.0f, 1.0f));
+            
+        }
 }
 
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
@@ -230,8 +248,8 @@ inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort =
     }
 }
 
-int main() {
-
+int main(int argc, char* argv[]) {
+    int samps = argc == 2 ? atoi(argv[1])/4 : 50;
     float3* c_h = new float3[WIDTH * HEIGHT]; // pointer to memory for image on the host (system RAM)
     //Sphere* spheres;
     float3* c_d;    // pointer to memory for image on the device (GPU VRAM)
@@ -247,7 +265,7 @@ int main() {
     printf("CUDA initialised.\nStart rendering...\n");
 
     // schedule threads on device and launch CUDA kernel from host
-    raytrac <<< grid, block >> > (c_d);
+    raytrac <<< grid, block >>> (samps,c_d);
     gpuErrchk(cudaPeekAtLastError());
 
     // copy results of computation from device back to host
