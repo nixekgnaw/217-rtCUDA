@@ -135,8 +135,9 @@ __device__ float3 radiance(Ray& r, curandState* rs) { // returns ray color
             r.o = x + nl * 0.05f; // offset ray origin slightly to prevent self intersection
             r.d = d;
             mask *= obj.c;    // multiply with colour of object       
-            //mask *= dot(d, nl);  // weigh light contribution using cosine of angle between incident light and normal
-            //mask *= 2;          // fudge factor
+            mask *= dot(d, nl);  // weigh light contribution using cosine of angle between incident light and normal
+            mask *= 2;          // fudge factor
+
         }
         else if (obj.refl == SPEC)
         {
@@ -148,7 +149,7 @@ __device__ float3 radiance(Ray& r, curandState* rs) { // returns ray color
             bool into = dot(n,nl) > 0;                // Ray from outside going in?
             float nc = 1, nt = 1.5;
             float nnt = into ? nc / nt : nt / nc;
-            float ddn = dot(r.d,nl), 
+            float ddn = dot(r.d, nl);
             float cos2t = 1 - nnt * nnt * (1 - ddn * ddn);
             if (cos2t < 0) { /// Ideal dielectric REFRACTION
                 r.o = x;
@@ -188,7 +189,7 @@ __device__ float3 radiance(Ray& r, curandState* rs) { // returns ray color
 //关键代码
 __global__ void raytrac(float3* c) {
 
-    // 每个thread管一个像素
+    // 每个thread管一个像素（可能有点浪费）
     // replace CPU version for-loop    
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
