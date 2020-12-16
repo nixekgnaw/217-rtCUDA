@@ -148,9 +148,6 @@
     </CudaCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\..\..\Desktop\217final\CUDA-RayTracing\book.h" />
-    <ClInclude Include="..\..\..\..\Desktop\217final\CUDA-RayTracing\cpu_bitmap.h" />
-    <ClInclude Include="..\..\..\..\Desktop\217final\CUDA-RayTracing\gl_helper.h" />
     <ClInclude Include="cutil_math.h" />
   </ItemGroup>
   <ItemGroup>
