@@ -135,9 +135,8 @@ __device__ float3 radiance(Ray& r, curandState* rs) { // returns ray color
             r.o = x + nl * 0.05f; // offset ray origin slightly to prevent self intersection
             r.d = d;
             mask *= obj.c;    // multiply with colour of object       
-            mask *= dot(d, nl);  // weigh light contribution using cosine of angle between incident light and normal
-            mask *= 2;          // fudge factor
-            //mask是如何等于递归的看不出来
+            //mask *= dot(d, nl);  // weigh light contribution using cosine of angle between incident light and normal
+            //mask *= 2;          // fudge factor
         }
         else if (obj.refl == SPEC)
         {
@@ -189,7 +188,7 @@ __device__ float3 radiance(Ray& r, curandState* rs) { // returns ray color
 //关键代码
 __global__ void raytrac(float3* c) {
 
-    // 每个thread管一个像素（可能有点浪费）
+    // 每个thread管一个像素
     // replace CPU version for-loop    
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
