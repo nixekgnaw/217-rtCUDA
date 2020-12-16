@@ -1,18 +1,15 @@
 #include <iostream>
 #include <cuda_runtime.h>
+#include "device_launch_parameters.h"
 
 // use CUDA's built-in float3 type：automated memory alignment & higher performance
 #include "cutil_math.h" 
 #include <vector_types.h>
-#include "device_launch_parameters.h"
 
 #define M_PI 3.14159265359f  // pi
 #define WIDTH 512  // screenwidth
 #define HEIGHT 384 // screenheight
-#define SAMPS 200 // samples 
-
-// __device__ : executed on the device (GPU) and callable only from the device
-
+#define SAMPS 500 // samples 
 
 struct Ray {
     float3 o,d; // 光线的起始和方向 ray origin & direction 
@@ -43,6 +40,22 @@ struct Sphere {
             det = sqrtf(det);    // sqrtf和 sqrt差别？有解则判断正负根
         return (t = b - det) > eps ? t : ((t = b + det) > eps ? t : 0); // 取closest one
     }
+};
+
+// SCENE
+// 9个球 9 spheres forming a Cornell box
+// ！！优化,或者说trick==用常量内存渲染球small enough to be in constant GPU memory
+// { float radius, { float3 position }, { float3 emission }, { float3 colour }, refl_type }
+__constant__ Sphere spheres[] = {
+ { 1e5f, { 1e5f + 1.0f, 40.8f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { 0.75f, 0.25f, 0.25f }, DIFF }, //Left 
+ { 1e5f, { -1e5f + 99.0f, 40.8f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { .25f, .25f, .75f }, DIFF }, //Rght 
+ { 1e5f, { 50.0f, 40.8f, 1e5f }, { 0.0f, 0.0f, 0.0f }, { .75f, .75f, .75f }, DIFF }, //Back 
+ { 1e5f, { 50.0f, 40.8f, -1e5f + 600.0f }, { 0.0f, 0.0f, 0.0f }, { 1.00f, 1.00f, 1.00f }, DIFF }, //Frnt 
+ { 1e5f, { 50.0f, 1e5f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { .75f, .75f, .75f }, DIFF }, //Botm 
+ { 1e5f, { 50.0f, -1e5f + 81.6f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { .75f, .75f, .75f }, DIFF }, //Top 
+ { 16.5f, { 27.0f, 16.5f, 47.0f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.0f }, SPEC }, // small sphere 1
+ { 16.5f, { 73.0f, 16.5f, 78.0f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.0f }, REFR }, // small sphere 2
+ { 600.0f, { 50.0f, 681.6f - .77f, 81.6f }, { 2.0f, 1.8f, 1.6f }, { 0.0f, 0.0f, 0.0f }, DIFF }  // Light
 };
 
 // convert RGB float in range [0,1] to int in range [0, 255]
@@ -89,10 +102,9 @@ __device__ float3 radiance(Ray& r, unsigned int* s1, unsigned int* s2) { // retu
 
     float3 accucolor = make_float3(0.0f, 0.0f, 0.0f); // accumulates ray colour with each iteration through bounce loop
     float3 mask = make_float3(1.0f, 1.0f, 1.0f);
-
     // ray bounce loop (no Russian Roulette used) 
-    for (int bounces = 0; bounces < 4; bounces++)
-    {  // ！！用了循坏不是递归,而且没用俄罗斯轮盘待改。可以另外测试递归的效果(replaces recursion in CPU code)
+    for (int bounces = 0; bounces < 8; bounces++)
+    {  // ！！用了循坏不是递归,而且没用俄罗斯轮盘待改
         float t;           // distance to intersection
         int id = 0;        // id of intersected object
         if (!intersect_scene(r, t, id))
@@ -133,26 +145,51 @@ __device__ float3 radiance(Ray& r, unsigned int* s1, unsigned int* s2) { // retu
             mask *= 2;          // fudge factor
             //mask是如何等于递归的看不出来
         }
+        else if (obj.refl == SPEC)
+        {
+            r.o = x;
+            r.d = r.d - n * 2 * dot(n, r.d);
+            mask *= obj.c;
+        }
+        else {
+            bool into = dot(n,nl) > 0;                // Ray from outside going in?
+            float nc = 1, nt = 1.5;
+            float nnt = into ? nc / nt : nt / nc;
+            float ddn = dot(r.d,nl), 
+            float cos2t = 1 - nnt * nnt * (1 - ddn * ddn);
+            if (cos2t < 0) { /// Ideal dielectric REFRACTION
+                r.o = x;
+                r.d = r.d - n * 2 * dot(n, r.d);
+                mask *= obj.c;
+            }
+            else {
+                float3 tdir = normalize(r.d * nnt - n * ((into ? 1 : -1) * (ddn * nnt + sqrt(cos2t))));
+                float a = nt - nc;
+                float b = nt + nc;
+                float R0 = a * a / (b * b);
+                float c = 1 - (into ? -ddn : dot(tdir,n));
+
+                float Re = R0 + (1 - R0) * c * c * c * c * c;
+                float Tr = 1 - Re;
+                float P = .25 + .5 * Re;
+                float RP = Re / P;
+                float TP = Tr / (1 - P);
+                if ((bounces>2)&&(getrandom(s1, s2) < P)) {
+                    r.o = x;
+                    r.d = r.d - n * 2 * dot(n, r.d);
+                    mask *= obj.c * RP;
+                }
+                else {
+                    r.o = x;
+                    r.d = tdir;
+                    mask *= obj.c * TP;
+                }
+            }
+        }
     }
 
     return accucolor;
 }
-
-// SCENE
-// 9个球 9 spheres forming a Cornell box
-// ！！优化,或者说trick==用常量内存渲染球small enough to be in constant GPU memory
-// { float radius, { float3 position }, { float3 emission }, { float3 colour }, refl_type }
-__constant__ Sphere spheres[] = {
- { 1e5f, { 1e5f + 1.0f, 40.8f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { 0.75f, 0.25f, 0.25f }, DIFF }, //Left 
- { 1e5f, { -1e5f + 99.0f, 40.8f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { .25f, .25f, .75f }, DIFF }, //Rght 
- { 1e5f, { 50.0f, 40.8f, 1e5f }, { 0.0f, 0.0f, 0.0f }, { .75f, .75f, .75f }, DIFF }, //Back 
- { 1e5f, { 50.0f, 40.8f, -1e5f + 600.0f }, { 0.0f, 0.0f, 0.0f }, { 1.00f, 1.00f, 1.00f }, DIFF }, //Frnt 
- { 1e5f, { 50.0f, 1e5f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { .75f, .75f, .75f }, DIFF }, //Botm 
- { 1e5f, { 50.0f, -1e5f + 81.6f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { .75f, .75f, .75f }, DIFF }, //Top 
- { 16.5f, { 27.0f, 16.5f, 47.0f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.0f }, DIFF }, // small sphere 1
- { 16.5f, { 73.0f, 16.5f, 78.0f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.0f }, DIFF }, // small sphere 2
- { 600.0f, { 50.0f, 681.6f - .77f, 81.6f }, { 2.0f, 1.8f, 1.6f }, { 0.0f, 0.0f, 0.0f }, DIFF }  // Light
-};
 
 //关键代码
 __global__ void raytrac(float3* c) {
