@@ -210,7 +210,8 @@ __global__ void raytrac(float3* c) {
         float3 d = cx * ((.25 + x) / WIDTH - .5) + 
             cy * ((.25 + y) / HEIGHT - .5)+ cam.d;
         // create primary ray, add incoming radiance to pixelcolor
-        r = r + radiance(Ray(cam.o + d * 40, normalize(d)), &rs) * (1. / SAMPS);
+        Ray ray(cam.o + d * 40, normalize(d));
+        r = r + radiance(ray, &rs) * (1. / SAMPS);
     }       // Camera rays are pushed ^^^^^ forward to start in interior 
     // write rgb value of pixel to image buffer on the GPU, clamp value to [0.0f, 1.0f] range
     c[i] = make_float3(clamp(r.x, 0.0f, 1.0f), clamp(r.y, 0.0f, 1.0f), clamp(r.z, 0.0f, 1.0f));
