@@ -14,7 +14,7 @@
 #define M_PI 3.14159265359f  // pi
 #define WIDTH 512  // screenwidth
 #define HEIGHT 384 // screenheight
-
+#define BLOCK_SIZE 8 // 2D block : BLOCK_SIZE*BLOCK_SIZE
 struct Ray {
     float3 o,d; // 光线的起始和方向 ray origin & direction 
     __device__ Ray(float3 o_, float3 d_) : o(o_), d(d_) {}
@@ -259,13 +259,20 @@ int main(int argc, char* argv[]) {
     gpuErrchk(cudaMalloc(&c_d, sizeof(float3) * WIDTH* HEIGHT));
 
     // dim3 is CUDA specific type, block and grid are required to schedule CUDA threads over streaming multiprocessors
-    dim3 block(32, 32, 1);
-    dim3 grid(WIDTH / block.x, HEIGHT / block.y, 1);
+    dim3 dim_grid, dim_block;
+    //dimblock
+    dim_block.x = BLOCK_SIZE;
+    dim_block.y = BLOCK_SIZE;
+    dim_block.z = 1;
+    //dimgrid
+    dim_grid.x = (WIDTH - 1) / BLOCK_SIZE + 1;
+    dim_grid.y = (HEIGHT - 1) / BLOCK_SIZE + 1;
+    dim_grid.z = 1;
 
     printf("CUDA initialised.\nStart rendering...\n");
 
     // schedule threads on device and launch CUDA kernel from host
-    raytrac <<< grid, block >>> (samps,c_d);
+    raytrac <<< dim_grid, dim_block >>> (samps,c_d);
     gpuErrchk(cudaPeekAtLastError());
 
     // copy results of computation from device back to host
