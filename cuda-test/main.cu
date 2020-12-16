@@ -12,8 +12,6 @@
 #include <curand_kernel.h>
 
 #define M_PI 3.14159265359f  // pi
-#define WIDTH 512  // screenwidth
-#define HEIGHT 384 // screenheight
 #define BLOCK_SIZE 8 // 2D block : BLOCK_SIZE*BLOCK_SIZE
 struct Ray {
     float3 o,d; // 光线的起始和方向 ray origin & direction 
@@ -190,20 +188,20 @@ __device__ float3 radiance(Ray& r, curandState* rs) { // returns ray color
 }
 
 //关键代码
-__global__ void raytrac(int samps,float3* c) {
+__global__ void raytrac(int samps,int height,int width,float3* c) {
 
     // 每个thread管一个像素
     // replace CPU version for-loop    
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-    unsigned int i = (HEIGHT - y - 1) * WIDTH + x; // index of current pixel 
+    unsigned int i = (height - y - 1) * width + x; // index of current pixel 
 
     curandState rs;
     curand_init(i, 0, 0, &rs);
     // first hardcoded camera ray(origin, direction) 
     Ray cam(make_float3(50, 52, 295.6), normalize(make_float3(0, -0.042612, -1))); 
-    float3 cx = make_float3(WIDTH * .5135 / HEIGHT, 0.0f, 0.0f); // ray direction offset in x direction
+    float3 cx = make_float3(width * .5135 / height, 0.0f, 0.0f); // ray direction offset in x direction
     float3 cy = normalize(cross(cx, cam.d)) * .5135; // ray direction offset in y direction (.5135 is field of view angle)
     float3 r = make_float3(0.0f); // reset r to zero for every pixel  r is final pixel color       
 
@@ -216,8 +214,8 @@ __global__ void raytrac(int samps,float3* c) {
                 float r2 = 2 * curand_uniform(&rs);
                 float dy = r2 < 1 ? sqrt(r2) - 1 : 1 - sqrt(2 - r2);
 
-                float3 d = cx * (((sx + .5 + dx) / 2 + x) / WIDTH - .5) +
-                    cy * (((sy + .5 + dy) / 2 + y) / HEIGHT - .5) + cam.d;
+                float3 d = cx * (((sx + .5 + dx) / 2 + x) / width - .5) +
+                    cy * (((sy + .5 + dy) / 2 + y) / height - .5) + cam.d;
                 Ray ray(cam.o + d * 40, normalize(d));
                 r = r + radiance(ray, &rs) * (1. / samps);
             } // Camera rays are pushed ^^^^^ forward to start in interior
@@ -249,14 +247,16 @@ inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort =
 }
 
 int main(int argc, char* argv[]) {
-    int samps = argc == 2 ? atoi(argv[1])/4 : 50;
-    float3* c_h = new float3[WIDTH * HEIGHT]; // pointer to memory for image on the host (system RAM)
+    int samps = argc >= 2 ? atoi(argv[1])/4 : 50;
+    int width = argc == 4 ? atoi(argv[2]): 1024; // screenwidth
+    int height= argc == 4 ? atoi(argv[3]): 768; // screenheight
+    float3* c_h = new float3[width * height]; // pointer to memory for image on the host (system RAM)
     //Sphere* spheres;
     float3* c_d;    // pointer to memory for image on the device (GPU VRAM)
 
     // allocate memory on the CUDA device (GPU VRAM)
     // 用常量内存装了输入，input就不用另外分配空间了
-    gpuErrchk(cudaMalloc(&c_d, sizeof(float3) * WIDTH* HEIGHT));
+    gpuErrchk(cudaMalloc(&c_d, sizeof(float3) * width* height));
 
     // dim3 is CUDA specific type, block and grid are required to schedule CUDA threads over streaming multiprocessors
     dim3 dim_grid, dim_block;
@@ -265,18 +265,18 @@ int main(int argc, char* argv[]) {
     dim_block.y = BLOCK_SIZE;
     dim_block.z = 1;
     //dimgrid
-    dim_grid.x = (WIDTH - 1) / BLOCK_SIZE + 1;
-    dim_grid.y = (HEIGHT - 1) / BLOCK_SIZE + 1;
+    dim_grid.x = (width - 1) / BLOCK_SIZE + 1;
+    dim_grid.y = (height - 1) / BLOCK_SIZE + 1;
     dim_grid.z = 1;
 
     printf("CUDA initialised.\nStart rendering...\n");
 
     // schedule threads on device and launch CUDA kernel from host
-    raytrac <<< dim_grid, dim_block >>> (samps,c_d);
+    raytrac <<< dim_grid, dim_block >>> (samps,height,width,c_d);
     gpuErrchk(cudaPeekAtLastError());
 
     // copy results of computation from device back to host
-    cudaMemcpy(c_h, c_d, WIDTH * HEIGHT * sizeof(float3), cudaMemcpyDeviceToHost);
+    cudaMemcpy(c_h, c_d, width * height * sizeof(float3), cudaMemcpyDeviceToHost);
 
     // free CUDA memory
     cudaFree(c_d);
@@ -285,8 +285,8 @@ int main(int argc, char* argv[]) {
 
     // Write image to PPM file, a very simple image file format
     FILE* f = fopen("image.ppm", "w");
-    fprintf(f, "P3\n%d %d\n%d\n", WIDTH, HEIGHT, 255);
-    for (int i = 0; i < WIDTH * HEIGHT; i++)  // loop over pixels, write RGB values
+    fprintf(f, "P3\n%d %d\n%d\n", width, height, 255);
+    for (int i = 0; i < width * height; i++)  // loop over pixels, write RGB values
         fprintf(f, "%d %d %d ", toInt(c_h[i].x),toInt(c_h[i].y),toInt(c_h[i].z));
     fclose(f);
     printf("Saved image to 'image.ppm'\n"); //可以改成计时
