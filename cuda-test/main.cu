@@ -1,3 +1,6 @@
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <iostream>
 #include <cuda_runtime.h>
 #include "device_launch_parameters.h"
@@ -189,7 +192,7 @@ __device__ float3 radiance(Ray& r, curandState* rs) { // returns ray color
 //关键代码
 __global__ void raytrac(float3* c) {
 
-    // 每个thread管一个像素（可能有点浪费）
+    // 每个thread管一个像素
     // replace CPU version for-loop    
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
