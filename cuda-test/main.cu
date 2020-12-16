@@ -9,7 +9,7 @@
 #define M_PI 3.14159265359f  // pi
 #define WIDTH 512  // screenwidth
 #define HEIGHT 384 // screenheight
-#define SAMPS 500 // samples 
+#define SAMPS 200 // samples 
 
 struct Ray {
     float3 o,d; // 光线的起始和方向 ray origin & direction 
@@ -103,7 +103,8 @@ __device__ float3 radiance(Ray& r, unsigned int* s1, unsigned int* s2) { // retu
     float3 accucolor = make_float3(0.0f, 0.0f, 0.0f); // accumulates ray colour with each iteration through bounce loop
     float3 mask = make_float3(1.0f, 1.0f, 1.0f);
     // ray bounce loop (no Russian Roulette used) 
-    for (int bounces = 0; bounces < 8; bounces++)
+    int bounces = 0;
+    while (true)
     {  // ！！用了循坏不是递归,而且没用俄罗斯轮盘待改
         float t;           // distance to intersection
         int id = 0;        // id of intersected object
@@ -113,6 +114,17 @@ __device__ float3 radiance(Ray& r, unsigned int* s1, unsigned int* s2) { // retu
         float3 x = r.o + r.d * t;          // 交点 hitpoint 
         float3 n = normalize(x - obj.p);    // 法线 normal
         float3 nl = dot(n, r.d) < 0 ? n : n * -1; // 法线永远朝入射反方向
+        float3 f = obj.c;
+
+        //轮盘赌
+        if (bounces++ > 5)
+        {
+            float rgbl = mask.x * 0.212671f + mask.y * 0.715160f + mask.z * 0.072169f;
+            float p = min(0.95f, rgbl);
+            if (getrandom(s1,s2) >= p)
+                break;
+            mask /= p;
+        }
 
         //俄罗斯轮盘赌？的代码
         //float p = f.x > f.y && f.x > f.z ? f.x : f.y > f.z ? f.y : f.z; // max refl
@@ -186,6 +198,7 @@ __device__ float3 radiance(Ray& r, unsigned int* s1, unsigned int* s2) { // retu
                 }
             }
         }
+
     }
 
     return accucolor;
