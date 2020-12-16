@@ -259,7 +259,7 @@ int main(int argc, char* argv[]) {
     gpuErrchk(cudaMalloc(&c_d, sizeof(float3) * WIDTH* HEIGHT));
 
     // dim3 is CUDA specific type, block and grid are required to schedule CUDA threads over streaming multiprocessors
-    dim3 block(8, 8, 1);
+    dim3 block(32, 32, 1);
     dim3 grid(WIDTH / block.x, HEIGHT / block.y, 1);
 
     printf("CUDA initialised.\nStart rendering...\n");
