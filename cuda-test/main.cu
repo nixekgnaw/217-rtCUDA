@@ -138,13 +138,13 @@ __device__ float3 radiance(Ray& r, curandState* rs) { // returns ray color
             r.o = x + nl * 0.05f; // offset ray origin slightly to prevent self intersection
             r.d = d;
             mask *= obj.c;    // multiply with colour of object       
-            mask *= dot(d, nl);  // weigh light contribution using cosine of angle between incident light and normal
-            mask *= 2;          // fudge factor
+            //mask *= dot(d, nl);  // weigh light contribution using cosine of angle between incident light and normal
+            //mask *= 2;          // fudge factor
 
         }
         else if (obj.refl == SPEC)
         {
-            r.o = x;
+            r.o = x + nl * 0.05f;
             r.d = r.d - n * 2 * dot(n, r.d);
             mask *= obj.c;
         }
