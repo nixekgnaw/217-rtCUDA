@@ -5,6 +5,7 @@
 // use CUDA's built-in float3 type：automated memory alignment & higher performance
 #include "cutil_math.h" 
 #include <vector_types.h>
+#include <curand_kernel.h>
 
 #define M_PI 3.14159265359f  // pi
 #define WIDTH 512  // screenwidth
@@ -20,7 +21,7 @@ enum Refl_t
 {
     DIFF, 
     SPEC, 
-    REFR };  // material types, used in radiance(), 当前只有漫反射 看看之后要不要加 only DIFF used here
+    REFR }; 
 
 struct Sphere {
 
@@ -74,38 +75,19 @@ __device__ inline bool intersect_scene(const Ray& r, float& t, int& id)
     return t < inf; // returns true if an intersection with the scene occurred, false when no hit
 }
 
-// !!奇奇怪怪的随机数生成==
-//random number generator from https://github.com/gz/rust-raytracer
-__device__ static float getrandom(unsigned int* seed0, unsigned int* seed1) {
-    *seed0 = 36969 * ((*seed0) & 65535) + ((*seed0) >> 16);  // hash the seeds using bitwise AND and bitshifts
-    *seed1 = 18000 * ((*seed1) & 65535) + ((*seed1) >> 16);
-
-    unsigned int ires = ((*seed0) << 16) + (*seed1);
-
-    // Convert to float
-    union {
-        float f;
-        unsigned int ui;
-    } res;
-
-    res.ui = (ires & 0x007fffff) | 0x40000000;  // bitwise AND, bitwise OR
-
-    return (res.f - 2.f) / 2.f;
-}
-
 // radiance function, the meat of path tracing 
 // solves the rendering equation: 
 // outgoing radiance (at a point) = emitted radiance + reflected radiance
 // reflected radiance is sum (integral) of incoming radiance from all directions in hemisphere above point, 
 // multiplied by reflectance function of material (BRDF) and cosine incident angle 
-__device__ float3 radiance(Ray& r, unsigned int* s1, unsigned int* s2) { // returns ray color
+__device__ float3 radiance(Ray& r, curandState* rs) { // returns ray color
 
     float3 accucolor = make_float3(0.0f, 0.0f, 0.0f); // accumulates ray colour with each iteration through bounce loop
     float3 mask = make_float3(1.0f, 1.0f, 1.0f);
     // ray bounce loop (no Russian Roulette used) 
     int bounces = 0;
     while (true)
-    {  // ！！用了循坏不是递归,而且没用俄罗斯轮盘待改
+    {  
         float t;           // distance to intersection
         int id = 0;        // id of intersected object
         if (!intersect_scene(r, t, id))
@@ -121,7 +103,7 @@ __device__ float3 radiance(Ray& r, unsigned int* s1, unsigned int* s2) { // retu
         {
             float rgbl = mask.x * 0.212671f + mask.y * 0.715160f + mask.z * 0.072169f;
             float p = min(0.95f, rgbl);
-            if (getrandom(s1,s2) >= p)
+            if (curand_uniform(rs) >= p)
                 break;
             mask /= p;
         }
@@ -140,8 +122,8 @@ __device__ float3 radiance(Ray& r, unsigned int* s1, unsigned int* s2) { // retu
         if (obj.refl == DIFF)
         {
 
-            float r1 = 2 * M_PI * getrandom(s1, s2); // 取一个随机数
-            float r2 = getrandom(s1, s2);  // 取第二个随机数
+            float r1 = 2 * M_PI * curand_uniform(rs); // 取一个随机数
+            float r2 = curand_uniform(rs);  // 取第二个随机数
             float r2s = sqrtf(r2);
             //各种计算
             float3 w = nl;
@@ -186,7 +168,7 @@ __device__ float3 radiance(Ray& r, unsigned int* s1, unsigned int* s2) { // retu
                 float P = .25 + .5 * Re;
                 float RP = Re / P;
                 float TP = Tr / (1 - P);
-                if ((bounces>2)&&(getrandom(s1, s2) < P)) {
+                if ((bounces>2)&&(curand_uniform(rs) < P)) {
                     r.o = x;
                     r.d = r.d - n * 2 * dot(n, r.d);
                     mask *= obj.c * RP;
@@ -214,8 +196,8 @@ __global__ void raytrac(float3* c) {
 
     unsigned int i = (HEIGHT - y - 1) * WIDTH + x; // index of current pixel 
 
-    unsigned int s1 = x;  // seeds for random number generator
-    unsigned int s2 = y;
+    curandState rs;
+    curand_init(i, 0, 0, &rs);
     // first hardcoded camera ray(origin, direction) 
     Ray cam(make_float3(50, 52, 295.6), normalize(make_float3(0, -0.042612, -1))); 
     float3 cx = make_float3(WIDTH * .5135 / HEIGHT, 0.0f, 0.0f); // ray direction offset in x direction
@@ -228,7 +210,7 @@ __global__ void raytrac(float3* c) {
         float3 d = cx * ((.25 + x) / WIDTH - .5) + 
             cy * ((.25 + y) / HEIGHT - .5)+ cam.d;
         // create primary ray, add incoming radiance to pixelcolor
-        r = r + radiance(Ray(cam.o + d * 40, normalize(d)), &s1, &s2) * (1. / SAMPS);
+        r = r + radiance(Ray(cam.o + d * 40, normalize(d)), &rs) * (1. / SAMPS);
     }       // Camera rays are pushed ^^^^^ forward to start in interior 
     // write rgb value of pixel to image buffer on the GPU, clamp value to [0.0f, 1.0f] range
     c[i] = make_float3(clamp(r.x, 0.0f, 1.0f), clamp(r.y, 0.0f, 1.0f), clamp(r.z, 0.0f, 1.0f));
