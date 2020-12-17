@@ -12,7 +12,7 @@
 #include <curand_kernel.h>
 
 #define M_PI 3.14159265359f  // pi
-#define BLOCK_SIZE 8 // 2D block : BLOCK_SIZE*BLOCK_SIZE
+#define BLOCK_SIZE 4 //2D block : BLOCK_SIZE*BLOCK_SIZE
 struct Ray {
     float3 o,d; // 光线的起始和方向 ray origin & direction 
     __device__ Ray(float3 o_, float3 d_) : o(o_), d(d_) {}
